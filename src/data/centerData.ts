@@ -50,7 +50,7 @@ export interface TimetableSlot {
 export const CENTER_INFO = {
   name: 'HỆ THỐNG QUẢN LÝ TRUNG TÂM',
   campus: 'Sa Thầy',
-  fullTitle: 'Trung Tâm Giáo Dục & Bồi Dưỡng Kiến Thức Sa Thầy',
+  fullTitle: 'Trung Tâm Học Giỏi',
   tagline: 'Quản lý Lớp học, Điểm danh & Sổ liên lạc điện tử đồng bộ',
   hotline: '0396.257.977',
   address: '01 Ngõ 350 - Trần Hưng Đạo - Sa Thầy - Quảng Ngãi',
@@ -260,7 +260,7 @@ export const ACTIVITIES_GALLERY: ActivityItem[] = [
     summary:
       'Đồng bộ dữ liệu lớp học trên Firestore, quản lý hồ sơ học sinh và xuất báo cáo tổng hợp nhanh chóng, minh bạch.',
     details:
-      'Trung tâm Giáo dục Sa Thầy ứng dụng nền tảng quản trị hiện đại tại quanlytrungtam.pages.dev: quản lý danh sách lớp học, tài khoản giáo viên & phụ huynh, điểm danh theo ca học và xuất file Excel tổng hợp chỉ với 1 thao tác.',
+      'Trung tâm Học Giỏi ứng dụng nền tảng quản trị hiện đại tại quanlytrungtam.pages.dev: quản lý danh sách lớp học, tài khoản giáo viên & phụ huynh, điểm danh theo ca học và xuất file Excel tổng hợp chỉ với 1 thao tác.',
     metrics: 'Đồng bộ thời gian thực giữa Trung tâm - Giáo viên - Phụ huynh',
     illustrationType: 'digital-portal',
     customImageUrl: '/assets/aistudio/image_8e9bd0f0.png',

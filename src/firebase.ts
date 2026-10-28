@@ -294,6 +294,27 @@ const LEGACY_HOTLINES = [
   '0912.345.678 / 0369.257.977',
 ];
 
+const LEGACY_FULL_TITLES = [
+  'Trung Tâm Giáo Dục Sa Thầy - Trang Chủ & Đăng Ký Học',
+  'Trung tâm Giáo dục Sa Thầy - Trang chủ & Đăng Ký học',
+  'Trung Tâm Giáo Dục & Bồi Dưỡng Kiến Thức Sa Thầy',
+  'Trung Tâm Bồi Dưỡng Kiến Thức — Cơ Sở Sa Thầy',
+  'Trung Tâm Giáo Dục Sa Thầy',
+  'Trung tâm Giáo dục Sa Thầy',
+];
+
+function normalizeFullTitle(title?: string): string {
+  const trimmed = (title || '').trim();
+  if (
+    !trimmed ||
+    LEGACY_FULL_TITLES.includes(trimmed) ||
+    trimmed.toLowerCase().includes('trung tâm giáo dục sa thầy')
+  ) {
+    return CENTER_INFO.fullTitle;
+  }
+  return trimmed;
+}
+
 function normalizeBannerUrl(url?: string): string {
   if (!url || !url.trim() || url.includes(LEGACY_TOP_BANNER_ID)) {
     return DEFAULT_TOP_BANNER_URL;
@@ -347,7 +368,7 @@ export const DEFAULT_SITE_CONTENT: SiteContentData = {
   centerInfo: {
     name: CENTER_INFO.name,
     campus: CENTER_INFO.campus,
-    fullTitle: 'Trung Tâm Bồi Dưỡng Kiến Thức — Cơ Sở Sa Thầy',
+    fullTitle: CENTER_INFO.fullTitle,
     topBannerImageUrl: DEFAULT_TOP_BANNER_URL,
     portalPreviewImageUrl: DEFAULT_PORTAL_PREVIEW_URL,
     heroSubtitle:
@@ -386,7 +407,7 @@ const ADMIN_REGISTRATIONS_COL_REF = collection(
 );
 const LEGACY_REGISTRATIONS_COL_REF = collection(db, 'registrations');
 
-const LOCAL_SITE_CACHE_KEY = 'sathay_site_content_cache_v6';
+const LOCAL_SITE_CACHE_KEY = 'sathay_site_content_cache_v7';
 const LOCAL_REG_CACHE_KEY = 'sathay_registrations_cache_v2';
 
 export function getCachedSiteContent(): SiteContentData {
@@ -398,6 +419,9 @@ export function getCachedSiteContent(): SiteContentData {
         ...DEFAULT_SITE_CONTENT.centerInfo,
         ...(parsed.centerInfo || {}),
       };
+      mergedCenterInfo.fullTitle = normalizeFullTitle(
+        mergedCenterInfo.fullTitle
+      );
       mergedCenterInfo.topBannerImageUrl = normalizeBannerUrl(
         mergedCenterInfo.topBannerImageUrl
       );
@@ -455,6 +479,8 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
 } {
   const rawBanner = raw.centerInfo?.topBannerImageUrl;
   const rawHotline = (raw.centerInfo?.hotline || '').trim();
+  const rawTitle = (raw.centerInfo?.fullTitle || '').trim();
+  const normalizedTitle = normalizeFullTitle(rawTitle);
   const normalizedBanner = normalizeBannerUrl(rawBanner);
   const normalizedPortalImg =
     (raw.centerInfo?.portalPreviewImageUrl || '').trim() ||
@@ -467,6 +493,7 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
     centerInfo: {
       ...DEFAULT_SITE_CONTENT.centerInfo,
       ...(raw.centerInfo || {}),
+      fullTitle: normalizedTitle,
       hotline: normalizedPhone,
       topBannerImageUrl: normalizedBanner,
       portalPreviewImageUrl: normalizedPortalImg,
@@ -485,6 +512,7 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
     (rawBanner && rawBanner.includes(LEGACY_TOP_BANNER_ID)) ||
       LEGACY_HOTLINES.includes(rawHotline) ||
       normalizedPhone !== rawHotline ||
+      normalizedTitle !== rawTitle ||
       needsMigration
   );
 

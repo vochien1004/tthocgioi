@@ -1,6 +1,6 @@
 {
   "name": "Trung Tâm Học Giỏi",
-  "description": "Trang chủ giới thiệu Trung tâm Giáo dục Sa Thầy: các lớp học đang hoạt động, hình ảnh hoạt động, thời khóa biểu, cổng Hệ thống Quản lý Trung tâm và đăng ký học trực tuyến.",
+  "description": "Trang chủ giới thiệu Trung tâm Học Giỏi: các lớp học đang hoạt động, hình ảnh hoạt động, thời khóa biểu, cổng Hệ thống Quản lý Trung tâm và đăng ký học trực tuyến.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

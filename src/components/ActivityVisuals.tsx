@@ -119,7 +119,7 @@ export const TopHeroBanner: React.FC<{
   altText?: string;
 }> = ({
   bannerUrl = 'https://drive.google.com/file/d/1IvO3VR6awaexVTNltG3ZTb1a0Q6quUtI/view?usp=drive_link',
-  altText = 'Banner Trung Tâm Giáo Dục & Bồi Dưỡng Kiến Thức Sa Thầy',
+  altText = 'Banner Trung Tâm Học Giỏi',
 }) => {
   const normalizedUrl = (bannerUrl || '').trim();
   const candidates = resolveImageCandidates(normalizedUrl);
