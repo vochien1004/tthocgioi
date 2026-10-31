@@ -393,22 +393,117 @@ export const DEFAULT_SITE_CONTENT: SiteContentData = {
   timetable: WEEKLY_TIMETABLE,
 };
 
-// Primary public document compatible with `match /public_data/{document=**}` rule
+// Primary public documents compatible with `match /public_data/{document=**}` rule (`allow read: if true; allow write: if isAdmin();`)
 const PUBLIC_DATA_SITE_DOC_REF = doc(db, 'public_data', 'homepage');
-// Legacy fallback document
-const LEGACY_SITE_DOC_REF = doc(db, 'site_config', 'homepage');
+const PUBLIC_DATA_REGISTRATIONS_DOC_REF = doc(
+  db,
+  'public_data',
+  'registrations_sync'
+);
 
-// Registrations collections compatible with `match /admin_data/{document=**}` and legacy `registrations`
+// Admin registrations collection compatible with `match /admin_data/{document=**}` rule (`allow read, write: if isAdmin();`)
 const ADMIN_REGISTRATIONS_COL_REF = collection(
   db,
   'admin_data',
   'center',
   'registrations'
 );
-const LEGACY_REGISTRATIONS_COL_REF = collection(db, 'registrations');
 
 const LOCAL_SITE_CACHE_KEY = 'sathay_site_content_cache_v7';
 const LOCAL_REG_CACHE_KEY = 'sathay_registrations_cache_v2';
+const LOCAL_REG_STATUS_MAP_KEY = 'sathay_reg_status_overrides_v1';
+const LOCAL_DELETED_REG_IDS_KEY = 'sathay_reg_deleted_ids_v1';
+
+function getLocalRegStatusOverrides(): Record<string, StudentRegistration['status']> {
+  try {
+    const raw = localStorage.getItem(LOCAL_REG_STATUS_MAP_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function setLocalRegStatusOverride(
+  id: string,
+  status: StudentRegistration['status'],
+  registrationCode?: string
+) {
+  try {
+    const current = getLocalRegStatusOverrides();
+    current[id] = status;
+    if (registrationCode) {
+      current[registrationCode] = status;
+    }
+    localStorage.setItem(LOCAL_REG_STATUS_MAP_KEY, JSON.stringify(current));
+  } catch {
+    // ignore
+  }
+}
+
+function getLocalDeletedRegIds(): string[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_DELETED_REG_IDS_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function addLocalDeletedRegId(id: string, registrationCode?: string) {
+  try {
+    const current = new Set(getLocalDeletedRegIds());
+    current.add(id);
+    if (registrationCode) {
+      current.add(registrationCode);
+    }
+    localStorage.setItem(
+      LOCAL_DELETED_REG_IDS_KEY,
+      JSON.stringify(Array.from(current))
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function applyLocalRegistrationOverrides(
+  list: StudentRegistration[]
+): StudentRegistration[] {
+  const deletedSet = new Set(getLocalDeletedRegIds());
+  const statusMap = getLocalRegStatusOverrides();
+  const seenKeys = new Set<string>();
+  const result: StudentRegistration[] = [];
+
+  for (const item of list) {
+    if (!item) continue;
+    const codeKey = item.registrationCode || item.id;
+    if (deletedSet.has(item.id) || (codeKey && deletedSet.has(codeKey))) {
+      continue;
+    }
+    const dedupeKey = codeKey || item.id;
+    if (seenKeys.has(dedupeKey)) {
+      continue;
+    }
+    seenKeys.add(dedupeKey);
+
+    const overrideStatus =
+      statusMap[item.id] ||
+      (item.registrationCode ? statusMap[item.registrationCode] : undefined);
+
+    result.push(
+      overrideStatus && overrideStatus !== item.status
+        ? { ...item, status: overrideStatus }
+        : item
+    );
+  }
+
+  return result.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+}
 
 export function getCachedSiteContent(): SiteContentData {
   try {
@@ -457,7 +552,10 @@ export function getCachedRegistrations(): StudentRegistration[] {
   try {
     const raw = localStorage.getItem(LOCAL_REG_CACHE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return applyLocalRegistrationOverrides(parsed);
+      }
     }
   } catch {
     // ignore
@@ -467,7 +565,8 @@ export function getCachedRegistrations(): StudentRegistration[] {
 
 export function setCachedRegistrations(list: StudentRegistration[]) {
   try {
-    localStorage.setItem(LOCAL_REG_CACHE_KEY, JSON.stringify(list));
+    const normalized = applyLocalRegistrationOverrides(list);
+    localStorage.setItem(LOCAL_REG_CACHE_KEY, JSON.stringify(normalized));
   } catch {
     // ignore
   }
@@ -521,14 +620,12 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
 
 /**
  * Subscribe to real-time Homepage Content from Firestore `public_data/homepage`
- * (with automatic fallback to `site_config/homepage`).
+ * (`match /public_data/{document=**}` allows `read: if true` and `write: if isAdmin()`).
  */
 export function subscribeToSiteContent(
   onData: (data: SiteContentData, syncedWithFirebase: boolean) => void,
   onError?: (errMessage: string) => void
 ) {
-  let fallbackUnsub: (() => void) | null = null;
-
   const primaryUnsub = onSnapshot(
     PUBLIC_DATA_SITE_DOC_REF,
     async (snap) => {
@@ -545,61 +642,36 @@ export function subscribeToSiteContent(
           }
         }
       } else {
-        // Check legacy `site_config/homepage` if `public_data/homepage` does not exist yet
-        try {
-          const legacySnap = await getDoc(LEGACY_SITE_DOC_REF);
-          if (legacySnap.exists()) {
-            const { merged } = parseRawSiteSnapshot(
-              legacySnap.data() as Partial<SiteContentData>
-            );
-            setCachedSiteContent(merged);
-            onData(merged, true);
-            return;
-          }
-        } catch {
-          // ignore if legacy path is blocked by rules
-        }
-
         const initialData: SiteContentData = {
           ...getCachedSiteContent(),
           updatedAt: new Date().toISOString(),
         };
+        setCachedSiteContent(initialData);
         onData(initialData, true);
+        if (auth.currentUser) {
+          try {
+            await setDoc(PUBLIC_DATA_SITE_DOC_REF, initialData);
+          } catch {
+            // ignore if current user is not admin
+          }
+        }
       }
     },
     (err) => {
-      // Fallback to legacy `site_config/homepage` subscription if needed
-      fallbackUnsub = onSnapshot(
-        LEGACY_SITE_DOC_REF,
-        (legacySnap) => {
-          if (legacySnap.exists()) {
-            const { merged } = parseRawSiteSnapshot(
-              legacySnap.data() as Partial<SiteContentData>
-            );
-            setCachedSiteContent(merged);
-            onData(merged, true);
-          } else {
-            onData(getCachedSiteContent(), false);
-          }
-        },
-        () => {
-          onData(getCachedSiteContent(), false);
-          if (onError) {
-            onError(err.message);
-          }
-        }
-      );
+      onData(getCachedSiteContent(), false);
+      if (onError) {
+        onError(err.message);
+      }
     }
   );
 
   return () => {
     primaryUnsub();
-    if (fallbackUnsub) fallbackUnsub();
   };
 }
 
 /**
- * Save updated SiteContentData to Firestore `public_data/homepage` (and `site_config/homepage` if allowed)
+ * Save updated SiteContentData to Firestore `public_data/homepage`
  */
 export async function saveSiteContentToFirebase(
   newData: SiteContentData
@@ -613,90 +685,134 @@ export async function saveSiteContentToFirebase(
   };
   setCachedSiteContent(payload);
 
-  const results = await Promise.allSettled([
-    setDoc(PUBLIC_DATA_SITE_DOC_REF, payload),
-    setDoc(LEGACY_SITE_DOC_REF, payload),
-  ]);
-
-  const anySucceeded = results.some((r) => r.status === 'fulfilled');
-  if (anySucceeded) {
+  try {
+    await setDoc(PUBLIC_DATA_SITE_DOC_REF, payload);
     return { savedToCloud: true };
+  } catch (err) {
+    return {
+      savedToCloud: false,
+      error: err instanceof Error ? err.message : String(err || 'Permission denied'),
+    };
   }
-
-  const firstRejected = results.find(
-    (r): r is PromiseRejectedResult => r.status === 'rejected'
-  );
-  return {
-    savedToCloud: false,
-    error:
-      firstRejected?.reason instanceof Error
-        ? firstRejected.reason.message
-        : String(firstRejected?.reason || 'Permission denied'),
-  };
 }
 
 /**
- * Subscribe to real-time Student Registrations from Firestore (`admin_data/center/registrations` or `registrations`)
+ * Helper to sync the current registrations list to `public_data/registrations_sync`
+ * and `admin_data/center/registrations/{id}` when authenticated as Admin.
+ */
+async function syncRegistrationsWhenAdmin(list: StudentRegistration[]) {
+  if (!auth.currentUser) return;
+  try {
+    await setDoc(PUBLIC_DATA_REGISTRATIONS_DOC_REF, {
+      items: list,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {
+    // ignore if not admin
+  }
+}
+
+/**
+ * Subscribe to real-time Student Registrations from Firestore:
+ * - Reads `public_data/registrations_sync` (allowed for all users via `match /public_data/{document=**}`)
+ * - Reads & syncs `admin_data/center/registrations` when authenticated as Admin (`match /admin_data/{document=**}`)
  */
 export function subscribeToRegistrations(
-  onData: (list: StudentRegistration[], syncedWithFirebase: boolean) => void,
-  onError?: (errMessage: string) => void
+  onData: (list: StudentRegistration[], syncedWithFirebase: boolean) => void
 ) {
-  let legacyUnsub: (() => void) | null = null;
-  const qAdmin = query(
-    ADMIN_REGISTRATIONS_COL_REF,
-    orderBy('createdAtMs', 'desc')
-  );
+  let adminItems: StudentRegistration[] = [];
+  let publicSyncItems: StudentRegistration[] = [];
+  let hasSyncedLocalToAdmin = false;
 
-  const unsubAdmin = onSnapshot(
-    qAdmin,
+  const emitMerged = (synced: boolean) => {
+    const cached = getCachedRegistrations();
+    const combined = applyLocalRegistrationOverrides([
+      ...adminItems,
+      ...publicSyncItems,
+      ...cached,
+    ]);
+    setCachedRegistrations(combined);
+    onData(combined, synced);
+    return combined;
+  };
+
+  // 1. Always subscribe to `public_data/registrations_sync` (public read is allowed by rules)
+  const unsubPublicSync = onSnapshot(
+    PUBLIC_DATA_REGISTRATIONS_DOC_REF,
     (snap) => {
-      const items: StudentRegistration[] = snap.docs.map((d) => {
-        const data = d.data() as Omit<StudentRegistration, 'id'>;
-        return {
-          ...data,
-          id: d.id,
-        };
-      });
-      if (items.length > 0) {
-        setCachedRegistrations(items);
-        onData(items, true);
-      } else {
-        onData(getCachedRegistrations(), true);
+      if (snap.exists()) {
+        const data = snap.data() as { items?: StudentRegistration[] };
+        if (Array.isArray(data?.items)) {
+          publicSyncItems = data.items;
+        }
       }
+      emitMerged(true);
     },
     () => {
-      // Fallback to legacy `registrations` collection
-      const qLegacy = query(
-        LEGACY_REGISTRATIONS_COL_REF,
-        orderBy('createdAtMs', 'desc')
-      );
-      legacyUnsub = onSnapshot(
-        qLegacy,
-        (snap) => {
-          const items: StudentRegistration[] = snap.docs.map((d) => {
-            const data = d.data() as Omit<StudentRegistration, 'id'>;
-            return {
-              ...data,
-              id: d.id,
-            };
-          });
-          setCachedRegistrations(items);
-          onData(items, true);
-        },
-        (err) => {
-          onData(getCachedRegistrations(), false);
-          if (onError) {
-            onError(err.message);
-          }
-        }
-      );
+      emitMerged(false);
     }
   );
 
+  // 2. Only subscribe to `admin_data/center/registrations` when logged in (requires `isAdmin()`)
+  let unsubAdmin: (() => void) | null = null;
+  if (auth.currentUser) {
+    const qAdmin = query(
+      ADMIN_REGISTRATIONS_COL_REF,
+      orderBy('createdAtMs', 'desc')
+    );
+
+    unsubAdmin = onSnapshot(
+      qAdmin,
+      async (snap) => {
+        adminItems = snap.docs.map((d) => {
+          const data = d.data() as Omit<StudentRegistration, 'id'>;
+          return {
+            ...data,
+            id: d.id,
+          };
+        });
+        const merged = emitMerged(true);
+
+        // Automatically upload any local cached registrations that aren't in `admin_data` yet
+        if (!hasSyncedLocalToAdmin && auth.currentUser) {
+          hasSyncedLocalToAdmin = true;
+          const existingIds = new Set(snap.docs.map((d) => d.id));
+          const existingCodes = new Set(
+            adminItems.map((i) => i.registrationCode).filter(Boolean)
+          );
+
+          for (const item of merged) {
+            if (
+              !existingIds.has(item.id) &&
+              (!item.registrationCode || !existingCodes.has(item.registrationCode))
+            ) {
+              const docId = item.registrationCode || item.id;
+              const { id: _unused, ...payload } = item;
+              try {
+                await setDoc(
+                  doc(db, 'admin_data', 'center', 'registrations', docId),
+                  payload,
+                  { merge: true }
+                );
+              } catch {
+                // ignore individual write error
+              }
+            }
+          }
+
+          await syncRegistrationsWhenAdmin(merged);
+        }
+      },
+      () => {
+        // Ignore if not admin yet
+        emitMerged(true);
+      }
+    );
+  }
+
   return () => {
-    unsubAdmin();
-    if (legacyUnsub) legacyUnsub();
+    unsubPublicSync();
+    if (unsubAdmin) unsubAdmin();
   };
 }
 
@@ -705,46 +821,75 @@ export function subscribeToRegistrations(
  */
 export async function createRegistrationInFirebase(
   entry: Omit<StudentRegistration, 'id'>
-): Promise<{ item: StudentRegistration; savedToCloud: boolean; error?: string }> {
-  const results = await Promise.allSettled([
-    addDoc(ADMIN_REGISTRATIONS_COL_REF, entry),
-    addDoc(LEGACY_REGISTRATIONS_COL_REF, entry),
-  ]);
+): Promise<{
+  item: StudentRegistration;
+  updatedList: StudentRegistration[];
+  savedToCloud: boolean;
+  error?: string;
+}> {
+  const docId = entry.registrationCode || `DK-${Date.now()}`;
+  if (entry.status && entry.registrationCode) {
+    setLocalRegStatusOverride(docId, entry.status, entry.registrationCode);
+  }
 
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      const created: StudentRegistration = {
-        ...entry,
-        id: r.value.id,
-      };
-      const current = getCachedRegistrations();
-      setCachedRegistrations([
-        created,
-        ...current.filter((item) => item.id !== created.id),
+  const created: StudentRegistration = {
+    ...entry,
+    id: docId,
+  };
+  const current = getCachedRegistrations();
+  const updatedList = applyLocalRegistrationOverrides([
+    created,
+    ...current.filter(
+      (item) =>
+        item.id !== created.id &&
+        item.registrationCode !== created.registrationCode
+    ),
+  ]);
+  setCachedRegistrations(updatedList);
+
+  if (auth.currentUser) {
+    try {
+      await Promise.all([
+        setDoc(
+          doc(db, 'admin_data', 'center', 'registrations', docId),
+          entry,
+          { merge: true }
+        ),
+        syncRegistrationsWhenAdmin(updatedList),
       ]);
-      return { item: created, savedToCloud: true };
+      return { item: created, updatedList, savedToCloud: true };
+    } catch (err) {
+      return {
+        item: created,
+        updatedList,
+        savedToCloud: false,
+        error: err instanceof Error ? err.message : String(err || ''),
+      };
     }
   }
 
-  const fallbackId = `local-${Date.now()}`;
-  const created: StudentRegistration = { ...entry, id: fallbackId };
-  const current = getCachedRegistrations();
-  setCachedRegistrations([created, ...current]);
-  const firstRejected = results.find(
-    (r): r is PromiseRejectedResult => r.status === 'rejected'
-  );
-  return {
-    item: created,
-    savedToCloud: false,
-    error:
-      firstRejected?.reason instanceof Error
-        ? firstRejected.reason.message
-        : String(firstRejected?.reason || ''),
-  };
+  // If submitted by a public visitor on the homepage (not logged in as Admin),
+  // try writing to `admin_data` in case rules allow create, and store locally so it auto-syncs on Admin login
+  try {
+    const ref = await addDoc(ADMIN_REGISTRATIONS_COL_REF, entry);
+    const cloudItem: StudentRegistration = { ...entry, id: ref.id };
+    const syncedList = applyLocalRegistrationOverrides([
+      cloudItem,
+      ...current.filter(
+        (item) =>
+          item.id !== cloudItem.id &&
+          item.registrationCode !== cloudItem.registrationCode
+      ),
+    ]);
+    setCachedRegistrations(syncedList);
+    return { item: cloudItem, updatedList: syncedList, savedToCloud: true };
+  } catch {
+    return { item: created, updatedList, savedToCloud: false };
+  }
 }
 
 /**
- * Update a registration's status or adminNote in Firestore
+ * Update a registration's status or adminNote in Firestore (`admin_data/center/registrations` & `public_data/registrations_sync`)
  */
 export async function updateRegistrationInFirebase(
   id: string,
@@ -757,30 +902,83 @@ export async function updateRegistrationInFirebase(
       | 'selectedClassName'
       | 'preferredSchedule'
     >
-  >
-): Promise<{ savedToCloud: boolean; error?: string }> {
-  const cached = getCachedRegistrations().map((r) =>
-    r.id === id ? { ...r, ...updates } : r
-  );
-  setCachedRegistrations(cached);
+  >,
+  fallbackItem?: StudentRegistration
+): Promise<{
+  updatedList: StudentRegistration[];
+  savedToCloud: boolean;
+  error?: string;
+}> {
+  const currentCached = getCachedRegistrations();
+  const targetItem =
+    currentCached.find((r) => r.id === id) || fallbackItem;
 
-  if (id.startsWith('local-')) {
-    return { savedToCloud: false };
+  if (updates.status) {
+    setLocalRegStatusOverride(
+      id,
+      updates.status,
+      targetItem?.registrationCode
+    );
   }
 
+  let found = false;
+  const mapped = currentCached.map((r) => {
+    if (
+      r.id === id ||
+      (targetItem?.registrationCode &&
+        r.registrationCode === targetItem.registrationCode)
+    ) {
+      found = true;
+      return { ...r, ...updates };
+    }
+    return r;
+  });
+
+  if (!found && targetItem) {
+    mapped.unshift({ ...targetItem, ...updates });
+  }
+
+  const updatedList = applyLocalRegistrationOverrides(mapped);
+  setCachedRegistrations(updatedList);
+
+  const docId = targetItem?.registrationCode || id;
+  const firestorePayload: Record<string, unknown> = targetItem
+    ? (() => {
+        const { id: _unusedId, ...rest } = { ...targetItem, ...updates };
+        return rest;
+      })()
+    : { ...updates };
+
   const results = await Promise.allSettled([
-    updateDoc(doc(db, 'admin_data', 'center', 'registrations', id), updates),
-    updateDoc(doc(db, 'registrations', id), updates),
+    setDoc(
+      doc(db, 'admin_data', 'center', 'registrations', docId),
+      firestorePayload,
+      { merge: true }
+    ),
+    ...(docId !== id
+      ? [
+          setDoc(
+            doc(db, 'admin_data', 'center', 'registrations', id),
+            firestorePayload,
+            { merge: true }
+          ),
+        ]
+      : []),
+    setDoc(PUBLIC_DATA_REGISTRATIONS_DOC_REF, {
+      items: updatedList,
+      updatedAt: new Date().toISOString(),
+    }),
   ]);
 
   if (results.some((r) => r.status === 'fulfilled')) {
-    return { savedToCloud: true };
+    return { updatedList, savedToCloud: true };
   }
 
   const firstRejected = results.find(
     (r): r is PromiseRejectedResult => r.status === 'rejected'
   );
   return {
+    updatedList,
     savedToCloud: false,
     error:
       firstRejected?.reason instanceof Error
@@ -792,30 +990,46 @@ export async function updateRegistrationInFirebase(
 /**
  * Delete a registration document from Firestore
  */
-export async function deleteRegistrationFromFirebase(id: string): Promise<{
+export async function deleteRegistrationFromFirebase(
+  id: string,
+  registrationCode?: string
+): Promise<{
+  updatedList: StudentRegistration[];
   savedToCloud: boolean;
   error?: string;
 }> {
-  const cached = getCachedRegistrations().filter((r) => r.id !== id);
-  setCachedRegistrations(cached);
+  const currentCached = getCachedRegistrations();
+  const target = currentCached.find((r) => r.id === id);
+  const code = registrationCode || target?.registrationCode;
+  addLocalDeletedRegId(id, code);
 
-  if (id.startsWith('local-')) {
-    return { savedToCloud: false };
-  }
+  const updatedList = applyLocalRegistrationOverrides(
+    currentCached.filter(
+      (r) => r.id !== id && (!code || r.registrationCode !== code)
+    )
+  );
+  setCachedRegistrations(updatedList);
 
   const results = await Promise.allSettled([
     deleteDoc(doc(db, 'admin_data', 'center', 'registrations', id)),
-    deleteDoc(doc(db, 'registrations', id)),
+    ...(code && code !== id
+      ? [deleteDoc(doc(db, 'admin_data', 'center', 'registrations', code))]
+      : []),
+    setDoc(PUBLIC_DATA_REGISTRATIONS_DOC_REF, {
+      items: updatedList,
+      updatedAt: new Date().toISOString(),
+    }),
   ]);
 
   if (results.some((r) => r.status === 'fulfilled')) {
-    return { savedToCloud: true };
+    return { updatedList, savedToCloud: true };
   }
 
   const firstRejected = results.find(
     (r): r is PromiseRejectedResult => r.status === 'rejected'
   );
   return {
+    updatedList,
     savedToCloud: false,
     error:
       firstRejected?.reason instanceof Error

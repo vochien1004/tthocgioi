@@ -135,17 +135,13 @@ export default function App() {
       }
     );
 
-    const unsubRegs = subscribeToRegistrations(
-      (list, synced) => {
-        setRegistrations(list);
-        if (synced) setSyncedWithFirebase(true);
-      },
-      (errMsg) => {
-        if (isAdminAuthenticated) {
-          setFirebaseError((prev) => prev || errMsg);
-        }
+    const unsubRegs = subscribeToRegistrations((list, synced) => {
+      setRegistrations(list);
+      if (synced) {
+        setSyncedWithFirebase(true);
+        setFirebaseError(null);
       }
-    );
+    });
 
     const handleRouteChange = () => {
       setViewMode(isInitialAdminRoute() ? 'admin' : 'home');
@@ -295,9 +291,7 @@ export default function App() {
     const result = await createRegistrationInFirebase(regPayload);
     setIsSubmittingForm(false);
     setSubmittedEntry(result.item);
-    if (!result.savedToCloud) {
-      setRegistrations((prev) => [result.item, ...prev]);
-    }
+    setRegistrations(result.updatedList);
 
     setStudentName('');
     setParentName('');
@@ -340,6 +334,7 @@ export default function App() {
           firebaseError={firebaseError}
           adminEmail={adminEmail}
           onUpdateSiteContent={(updated) => setSiteContent(updated)}
+          onUpdateRegistrations={(updated) => setRegistrations(updated)}
           onExitAdmin={() => switchView('home')}
           onLogoutAdmin={handleLogoutAdmin}
         />
@@ -1140,13 +1135,13 @@ export default function App() {
                 <li className="flex items-start gap-2.5">
                   <UserCheck className="w-4 h-4 text-[#0066A2] shrink-0 mt-0.5" />
                   <span>
-                    <strong>Quản lý Lớp học & Giáo viên:</strong> Theo dõi sĩ số, lịch dạy và nhận xét học sinh.
+                    <strong>Quản lý Lớp học:</strong> Giáo viên theo dõi sĩ số, lịch dạy và nhận xét học sinh hàng ngày.
                   </span>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <BookOpen className="w-4 h-4 text-[#059669] shrink-0 mt-0.5" />
                   <span>
-                    <strong>Sổ liên lạc & Điểm danh:</strong> Xem chuyên cần, điểm kiểm tra và nhận xét từng buổi học.
+                    <strong>Sổ liên lạc điện tử:</strong> Phụ huynh xem chuyên cần, điểm kiểm tra và nhận xét từng buổi học của học sinh.
                   </span>
                 </li>
                

@@ -53,6 +53,7 @@ interface AdminDashboardProps {
   firebaseError: string | null;
   adminEmail?: string;
   onUpdateSiteContent?: (updated: SiteContentData) => void;
+  onUpdateRegistrations?: (updated: StudentRegistration[]) => void;
   onExitAdmin: () => void;
   onLogoutAdmin?: () => void;
 }
@@ -72,6 +73,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   firebaseError,
   adminEmail,
   onUpdateSiteContent,
+  onUpdateRegistrations,
   onExitAdmin,
   onLogoutAdmin,
 }) => {
@@ -81,9 +83,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     message?: string;
   }>({ type: 'idle' });
 
-  // Registration filters & modals
+  // Registration filters, draft status selections & modals
   const [regSearch, setRegSearch] = useState('');
   const [regStatusFilter, setRegStatusFilter] = useState<string>('Tất cả');
+  const [draftStatuses, setDraftStatuses] = useState<
+    Record<string, StudentRegistration['status']>
+  >({});
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [newStudentForm, setNewStudentForm] = useState({
     studentName: '',
@@ -202,29 +207,138 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  // Approve registration & enroll student into class (+1 student count)
-  const handleEnrollStudentToClass = async (reg: StudentRegistration) => {
-    await updateRegistrationInFirebase(reg.id, { status: 'Đã xếp lớp' });
-    const updatedClasses = siteContent.classes.map((c) =>
-      c.id === reg.selectedClassId
-        ? { ...c, studentsCount: Number(c.studentsCount || 0) + 1 }
-        : c
-    );
-    const updatedStats = {
-      ...siteContent.centerInfo.stats,
-      students: Number(siteContent.centerInfo.stats.students || 0) + 1,
-    };
-    await triggerSaveSiteContent(
-      {
-        ...siteContent,
-        classes: updatedClasses,
-        centerInfo: {
-          ...siteContent.centerInfo,
-          stats: updatedStats,
+  // Approve one or multiple registrations where status was selected & update notification badges + class counts
+  const handleApproveRegistrations = async (targetReg?: StudentRegistration) => {
+    const updatesToApply = new Map<
+      string,
+      { reg: StudentRegistration; newStatus: StudentRegistration['status'] }
+    >();
+
+    // Include any registrations whose dropdown status was changed by the admin
+    for (const r of registrations) {
+      const chosen = draftStatuses[r.id];
+      if (chosen && chosen !== r.status) {
+        updatesToApply.set(r.id, { reg: r, newStatus: chosen });
+      }
+    }
+
+    // Also include the specific row where the admin clicked "Duyệt"
+    if (targetReg) {
+      const chosenForTarget = draftStatuses[targetReg.id];
+      const nextStatusForTarget: StudentRegistration['status'] =
+        chosenForTarget && chosenForTarget !== targetReg.status
+          ? chosenForTarget
+          : 'Đã xếp lớp';
+      updatesToApply.set(targetReg.id, {
+        reg: targetReg,
+        newStatus: nextStatusForTarget,
+      });
+    }
+
+    if (updatesToApply.size === 0) return;
+
+    // 1. Optimistically update registrations state immediately so notification badges decrement right away
+    const nextRegistrations = registrations.map((r) => {
+      const pending = updatesToApply.get(r.id);
+      return pending ? { ...r, status: pending.newStatus } : r;
+    });
+    if (onUpdateRegistrations) {
+      onUpdateRegistrations(nextRegistrations);
+    }
+
+    // Clear applied draft statuses
+    setDraftStatuses((prev) => {
+      const next = { ...prev };
+      for (const id of updatesToApply.keys()) {
+        delete next[id];
+      }
+      return next;
+    });
+
+    // 2. Persist each updated registration to Firebase & localStorage cache
+    let latestCachedList = nextRegistrations;
+    for (const [id, { reg, newStatus }] of updatesToApply.entries()) {
+      const res = await updateRegistrationInFirebase(
+        id,
+        { status: newStatus },
+        reg
+      );
+      latestCachedList = res.updatedList;
+    }
+    if (onUpdateRegistrations) {
+      onUpdateRegistrations(latestCachedList);
+    }
+
+    // 3. Calculate how many students newly transitioned to "Đã xếp lớp" to increment class counts
+    const classIncrements: Record<string, number> = {};
+    let totalNewlyEnrolled = 0;
+    for (const { reg, newStatus } of updatesToApply.values()) {
+      if (reg.status !== 'Đã xếp lớp' && newStatus === 'Đã xếp lớp') {
+        classIncrements[reg.selectedClassId] =
+          (classIncrements[reg.selectedClassId] || 0) + 1;
+        totalNewlyEnrolled += 1;
+      }
+    }
+
+    const approvedNames = Array.from(updatesToApply.values())
+      .map((u) => `${u.reg.studentName} (${u.newStatus})`)
+      .join(', ');
+
+    if (totalNewlyEnrolled > 0) {
+      const updatedClasses = siteContent.classes.map((c) =>
+        classIncrements[c.id]
+          ? {
+              ...c,
+              studentsCount: Number(c.studentsCount || 0) + classIncrements[c.id],
+            }
+          : c
+      );
+      const updatedStats = {
+        ...siteContent.centerInfo.stats,
+        students:
+          Number(siteContent.centerInfo.stats.students || 0) + totalNewlyEnrolled,
+      };
+      await triggerSaveSiteContent(
+        {
+          ...siteContent,
+          classes: updatedClasses,
+          centerInfo: {
+            ...siteContent.centerInfo,
+            stats: updatedStats,
+          },
         },
-      },
-      `Đã xếp lớp cho học sinh ${reg.studentName} và cập nhật sĩ số lên Firebase!`
+        `Đã duyệt ${updatesToApply.size} học sinh: ${approvedNames}!`
+      );
+    } else {
+      setSavingStatus({
+        type: 'saved',
+        message: `Đã cập nhật trạng thái cho ${updatesToApply.size} học sinh: ${approvedNames}!`,
+      });
+      setTimeout(() => {
+        setSavingStatus((prev) =>
+          prev.type === 'saved' ? { type: 'idle' } : prev
+        );
+      }, 4000);
+    }
+  };
+
+  const handleDeleteRegistration = async (reg: StudentRegistration) => {
+    const nextRegistrations = registrations.filter((r) => r.id !== reg.id);
+    if (onUpdateRegistrations) {
+      onUpdateRegistrations(nextRegistrations);
+    }
+    setDraftStatuses((prev) => {
+      const next = { ...prev };
+      delete next[reg.id];
+      return next;
+    });
+    const res = await deleteRegistrationFromFirebase(
+      reg.id,
+      reg.registrationCode
     );
+    if (onUpdateRegistrations) {
+      onUpdateRegistrations(res.updatedList);
+    }
   };
 
   // Manual student creation from Admin
@@ -240,7 +354,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       { hour: '2-digit', minute: '2-digit' }
     )}`;
 
-    await createRegistrationInFirebase({
+    const res = await createRegistrationInFirebase({
       registrationCode: `AD-${Math.floor(100000 + Math.random() * 900000)}`,
       studentName: newStudentForm.studentName.trim(),
       parentName: newStudentForm.parentName.trim() || 'Phụ huynh học sinh',
@@ -257,6 +371,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       createdAt: formattedDate,
       createdAtMs: Date.now(),
     });
+    if (onUpdateRegistrations) {
+      onUpdateRegistrations(res.updatedList);
+    }
 
     setNewStudentForm({
       studentName: '',
@@ -809,9 +926,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               title="Xem danh sách đăng ký học mới"
             >
               <Bell className="w-5 h-5" />
-              <span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-[#EA580C] text-white text-[11px] font-mono-tabular font-bold flex items-center justify-center">
-                {registrations.length}
-              </span>
+              {newRegistrationsCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-5 h-5 px-1 rounded-full bg-[#EA580C] text-white text-[11px] font-mono-tabular font-bold flex items-center justify-center">
+                  {newRegistrationsCount}
+                </span>
+              )}
             </button>
 
             <div className="h-6 w-px bg-slate-200 hidden sm:block" />
@@ -1131,15 +1250,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <span className="w-2 h-6 rounded-full bg-[#E11D48]" aria-hidden="true" />
                   <div>
                     <h1 className="text-lg sm:text-xl font-extrabold text-[#004E7C]">
-                      Tiếp Nhận & Quản Lý Đăng Ký Học ({registrations.length})
+                      Tiếp Nhận & Quản Lý Đăng Ký Học ({newRegistrationsCount})
                     </h1>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Dữ liệu đồng bộ thời gian thực từ Form Thông Tin Khách Hàng trên Trang chủ (Firestore: registrations)
+                      Dữ liệu đồng bộ thời gian thực từ Form Thông Tin Khách Hàng trên Trang chủ (Firestore: admin_data & public_data)
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2.5 flex-wrap">
+                  {Object.entries(draftStatuses).some(([id, st]) => {
+                    const found = registrations.find((r) => r.id === id);
+                    return found && found.status !== st;
+                  }) && (
+                    <button
+                      type="button"
+                      onClick={() => handleApproveRegistrations()}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer shadow-xs"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>
+                        Duyệt các mục đã chọn (
+                        {
+                          Object.entries(draftStatuses).filter(([id, st]) => {
+                            const found = registrations.find((r) => r.id === id);
+                            return found && found.status !== st;
+                          }).length
+                        }
+                        )
+                      </span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setShowAddStudentModal(true)}
@@ -1205,115 +1346,132 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredRegistrations.map((reg) => (
-                    <div
-                      key={reg.id}
-                      className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:border-[#0066A2]/50 transition-colors"
-                    >
-                      <div className="space-y-1.5 flex-1">
-                        <div className="flex items-center gap-2.5 flex-wrap text-xs">
-                          <span className="font-mono-tabular font-bold text-slate-500">
-                            #{reg.registrationCode || reg.id.slice(0, 8)}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span className="font-mono-tabular text-slate-500">
-                            Đăng ký lúc: {reg.createdAt}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span
-                            className={`font-bold ${
-                              reg.status === 'Đã xếp lớp'
-                                ? 'text-[#059669]'
-                                : reg.status === 'Đã liên hệ'
-                                ? 'text-[#0284C7]'
-                                : reg.status === 'Đã hủy'
-                                ? 'text-slate-400'
-                                : 'text-[#D97706]'
-                            }`}
-                          >
-                            Trạng thái: {reg.status}
-                          </span>
-                        </div>
+                  {filteredRegistrations.map((reg) => {
+                    const currentSelectStatus = draftStatuses[reg.id] ?? reg.status;
+                    const hasPendingStatusChange =
+                      draftStatuses[reg.id] !== undefined &&
+                      draftStatuses[reg.id] !== reg.status;
+                    const showApproveBtn =
+                      reg.status !== 'Đã xếp lớp' || hasPendingStatusChange;
 
-                        <div className="text-base font-extrabold text-slate-900">
-                          Học sinh: {reg.studentName}{' '}
-                          <span className="text-xs font-semibold text-slate-500">
-                            ({reg.grade})
-                          </span>
-                        </div>
-
-                        <div className="text-xs sm:text-sm text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-1">
-                          <span>
-                            Phụ huynh: <strong>{reg.parentName}</strong>
-                          </span>
-                          <span>
-                            SĐT Zalo:{' '}
-                            <a
-                              href={`tel:${reg.phone}`}
-                              className="font-mono-tabular font-bold text-[#0066A2] hover:underline"
+                    return (
+                      <div
+                        key={reg.id}
+                        className="rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:border-[#0066A2]/50 transition-colors"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2.5 flex-wrap text-xs">
+                            <span className="font-mono-tabular font-bold text-slate-500">
+                              #{reg.registrationCode || reg.id.slice(0, 8)}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono-tabular text-slate-500">
+                              Đăng ký lúc: {reg.createdAt}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span
+                              className={`font-bold ${
+                                reg.status === 'Đã xếp lớp'
+                                  ? 'text-[#059669]'
+                                  : reg.status === 'Đã liên hệ'
+                                  ? 'text-[#0284C7]'
+                                  : reg.status === 'Đã hủy'
+                                  ? 'text-slate-400'
+                                  : 'text-[#D97706]'
+                              }`}
                             >
-                              {reg.phone}
-                            </a>
-                          </span>
-                          <span>
-                            Lớp đăng ký:{' '}
-                            <strong className="text-[#004E7C]">
-                              {reg.selectedClassName}
-                            </strong>
-                          </span>
-                          <span className="font-mono-tabular text-xs text-slate-500">
-                            Lịch: {reg.preferredSchedule}
-                          </span>
+                              Trạng thái: {reg.status}
+                            </span>
+                          </div>
+
+                          <div className="text-base font-extrabold text-slate-900">
+                            Học sinh: {reg.studentName}{' '}
+                            <span className="text-xs font-semibold text-slate-500">
+                              ({reg.grade})
+                            </span>
+                          </div>
+
+                          <div className="text-xs sm:text-sm text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-1">
+                            <span>
+                              Phụ huynh: <strong>{reg.parentName}</strong>
+                            </span>
+                            <span>
+                              SĐT Zalo:{' '}
+                              <a
+                                href={`tel:${reg.phone}`}
+                                className="font-mono-tabular font-bold text-[#0066A2] hover:underline"
+                              >
+                                {reg.phone}
+                              </a>
+                            </span>
+                            <span>
+                              Lớp đăng ký:{' '}
+                              <strong className="text-[#004E7C]">
+                                {reg.selectedClassName}
+                              </strong>
+                            </span>
+                            <span className="font-mono-tabular text-xs text-slate-500">
+                              Lịch: {reg.preferredSchedule}
+                            </span>
+                          </div>
+
+                          {reg.note && (
+                            <div className="text-xs text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-200/60 mt-1">
+                              <strong>Ghi chú từ PH/HS:</strong> {reg.note}
+                            </div>
+                          )}
                         </div>
 
-                        {reg.note && (
-                          <div className="text-xs text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-200/60 mt-1">
-                            <strong>Ghi chú từ PH/HS:</strong> {reg.note}
-                          </div>
-                        )}
-                      </div>
+                        {/* Admin Status Controls */}
+                        <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+                          <select
+                            aria-label="Cập nhật trạng thái đăng ký"
+                            value={currentSelectStatus}
+                            onChange={(e) => {
+                              const nextVal = e.target
+                                .value as StudentRegistration['status'];
+                              setDraftStatuses((prev) => ({
+                                ...prev,
+                                [reg.id]: nextVal,
+                              }));
+                            }}
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 focus:border-[#0066A2] focus:outline-none"
+                          >
+                            <option value="Mới đăng ký">Mới đăng ký</option>
+                            <option value="Đã liên hệ">Đã liên hệ tư vấn</option>
+                            <option value="Đã xếp lớp">Đã xếp lớp</option>
+                            <option value="Đã hủy">Đã hủy</option>
+                          </select>
 
-                      {/* Admin Status Controls */}
-                      <div className="flex flex-wrap items-center gap-2 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
-                        <select
-                          aria-label="Cập nhật trạng thái đăng ký"
-                          value={reg.status}
-                          onChange={(e) =>
-                            updateRegistrationInFirebase(reg.id, {
-                              status: e.target.value as StudentRegistration['status'],
-                            })
-                          }
-                          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 focus:border-[#0066A2] focus:outline-none"
-                        >
-                          <option value="Mới đăng ký">Mới đăng ký</option>
-                          <option value="Đã liên hệ">Đã liên hệ tư vấn</option>
-                          <option value="Đã xếp lớp">Đã xếp lớp</option>
-                          <option value="Đã hủy">Đã hủy</option>
-                        </select>
+                          {showApproveBtn ? (
+                            <button
+                              type="button"
+                              onClick={() => handleApproveRegistrations(reg)}
+                              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
+                              title="Duyệt trạng thái đã chọn và tự động cập nhật thông báo & sĩ số lớp học"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Duyệt & +1 Sĩ số</span>
+                            </button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-[#059669] text-xs font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Đã duyệt</span>
+                            </span>
+                          )}
 
-                        {reg.status !== 'Đã xếp lớp' && (
                           <button
                             type="button"
-                            onClick={() => handleEnrollStudentToClass(reg)}
-                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold cursor-pointer"
-                            title="Duyệt vào lớp và tự động +1 sĩ số lớp học"
+                            onClick={() => handleDeleteRegistration(reg)}
+                            className="p-2 rounded-xl border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 cursor-pointer"
+                            title="Xóa phiếu đăng ký"
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Duyệt & +1 Sĩ số</span>
+                            <Trash2 className="w-4 h-4" />
                           </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => deleteRegistrationFromFirebase(reg.id)}
-                          className="p-2 rounded-xl border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 cursor-pointer"
-                          title="Xóa phiếu đăng ký"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>
