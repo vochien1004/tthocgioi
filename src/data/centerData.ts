@@ -55,7 +55,7 @@ export const CENTER_INFO = {
   hotline: '0396.257.977',
   address: '01 Ngõ 350 - Trần Hưng Đạo - Sa Thầy - Quảng Ngãi',
   workingHours: '07:30 - 20:30 (Thứ 2 - Chủ Nhật)',
-  managementUrl: 'https://quanlytrungtam.pages.dev',
+  managementUrl: 'https://quanly.tthocgioi.com',
   stats: {
     activeClasses: 6,
     featuredClassesInAdmin: 2,
@@ -256,11 +256,11 @@ export const ACTIVITIES_GALLERY: ActivityItem[] = [
     category: 'Sổ liên lạc & Phụ huynh',
     date: 'Cập nhật hàng ngày',
     teacher: 'Quản trị viên · Cơ sở Sa Thầy',
-    location: 'Cổng trực tuyến quanlytrungtam.pages.dev',
+    location: 'Cổng trực tuyến quanly.tthocgioi.com',
     summary:
       'Đồng bộ dữ liệu lớp học trên Firestore, quản lý hồ sơ học sinh và xuất báo cáo tổng hợp nhanh chóng, minh bạch.',
     details:
-      'Trung tâm Học Giỏi ứng dụng nền tảng quản trị hiện đại tại quanlytrungtam.pages.dev: quản lý danh sách lớp học, tài khoản giáo viên & phụ huynh, điểm danh theo ca học và xuất file Excel tổng hợp chỉ với 1 thao tác.',
+      'Trung tâm Học Giỏi ứng dụng nền tảng quản trị hiện đại tại https://quanly.tthocgioi.com: quản lý danh sách lớp học, tài khoản giáo viên & phụ huynh, điểm danh theo ca học và xuất file Excel tổng hợp chỉ với 1 thao tác.',
     metrics: 'Đồng bộ thời gian thực giữa Trung tâm - Giáo viên - Phụ huynh',
     illustrationType: 'digital-portal',
     customImageUrl: '/assets/aistudio/image_8e9bd0f0.png',

@@ -335,6 +335,14 @@ function normalizeHotline(hotline?: string): string {
   return trimmed;
 }
 
+function normalizeManagementUrl(url?: string): string {
+  const trimmed = (url || '').trim();
+  if (!trimmed || trimmed.includes('quanlytrungtam.pages.dev')) {
+    return CENTER_INFO.managementUrl;
+  }
+  return trimmed;
+}
+
 function normalizeActivitiesList(
   rawActivities?: (ActivityItem & { customImageUrl?: string })[]
 ): {
@@ -524,6 +532,9 @@ export function getCachedSiteContent(): SiteContentData {
         (mergedCenterInfo.portalPreviewImageUrl || '').trim() ||
         DEFAULT_PORTAL_PREVIEW_URL;
       mergedCenterInfo.hotline = normalizeHotline(mergedCenterInfo.hotline);
+      mergedCenterInfo.managementUrl = normalizeManagementUrl(
+        mergedCenterInfo.managementUrl
+      );
       const { items: normalizedActs } = normalizeActivitiesList(
         parsed.activities
       );
@@ -579,12 +590,14 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
   const rawBanner = raw.centerInfo?.topBannerImageUrl;
   const rawHotline = (raw.centerInfo?.hotline || '').trim();
   const rawTitle = (raw.centerInfo?.fullTitle || '').trim();
+  const rawManagementUrl = (raw.centerInfo?.managementUrl || '').trim();
   const normalizedTitle = normalizeFullTitle(rawTitle);
   const normalizedBanner = normalizeBannerUrl(rawBanner);
   const normalizedPortalImg =
     (raw.centerInfo?.portalPreviewImageUrl || '').trim() ||
     DEFAULT_PORTAL_PREVIEW_URL;
   const normalizedPhone = normalizeHotline(rawHotline);
+  const normalizedManagementUrl = normalizeManagementUrl(rawManagementUrl);
   const { items: normalizedActivities, needsMigration } =
     normalizeActivitiesList(raw.activities);
 
@@ -594,6 +607,7 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
       ...(raw.centerInfo || {}),
       fullTitle: normalizedTitle,
       hotline: normalizedPhone,
+      managementUrl: normalizedManagementUrl,
       topBannerImageUrl: normalizedBanner,
       portalPreviewImageUrl: normalizedPortalImg,
     },
@@ -612,6 +626,7 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
       LEGACY_HOTLINES.includes(rawHotline) ||
       normalizedPhone !== rawHotline ||
       normalizedTitle !== rawTitle ||
+      normalizedManagementUrl !== rawManagementUrl ||
       needsMigration
   );
 

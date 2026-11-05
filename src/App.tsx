@@ -454,7 +454,7 @@ export default function App() {
 
             {/* Management portal login button */}
             <a
-              href="https://quanlytrungtam.pages.dev"
+              href="https://quanly.tthocgioi.com"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3.5 py-2 rounded-xl bg-[#0066B3] hover:bg-[#005291] text-white text-[11px] sm:text-xs xl:text-sm font-extrabold shadow-xs transition-colors whitespace-nowrap text-center min-w-0"
@@ -551,7 +551,7 @@ export default function App() {
                 </button>
 
                 <a
-                  href="https://quanlytrungtam.pages.dev"
+                  href="https://quanly.tthocgioi.com"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl border-2 border-[#0066B3] bg-[#F0F7FF] hover:bg-[#0066B3] text-[#0066B3] hover:text-white text-sm sm:text-base font-extrabold transition-colors whitespace-nowrap text-center"
@@ -1064,7 +1064,7 @@ export default function App() {
 
             <div className="flex items-center gap-2.5 flex-wrap">
               <a
-                href="https://quanlytrungtam.pages.dev"
+                href="https://quanly.tthocgioi.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0066A2] hover:bg-[#005282] text-white text-xs sm:text-sm font-bold transition-colors whitespace-nowrap shrink-0"
@@ -1081,11 +1081,11 @@ export default function App() {
             <div className="lg:col-span-7 rounded-2xl border border-slate-200 overflow-hidden bg-slate-100 shadow-xs">
               {!adminScreenshotError ? (
                 <a
-                  href={centerInfo.managementUrl}
+                  href="https://quanly.tthocgioi.com"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block relative group"
-                  title="Nhấn để truy cập Hệ thống quản lý trung tâm (quanlytrungtam.pages.dev)"
+                  title="Nhấn để truy cập Hệ thống quản lý trung tâm (https://quanly.tthocgioi.com)"
                 >
                   {(() => {
                     const portalCandidates = resolveImageCandidates(
@@ -1438,7 +1438,7 @@ export default function App() {
             </button>
             <span aria-hidden="true">·</span>
             <a
-              href={centerInfo.managementUrl}
+              href="https://quanly.tthocgioi.com"
               target="_blank"
               rel="noopener noreferrer"
               className="font-semibold text-[#0066A2] hover:underline inline-flex items-center gap-1"
