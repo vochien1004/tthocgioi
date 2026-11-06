@@ -501,7 +501,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     await triggerSaveSiteContent(
       {
         ...siteContent,
-        centerInfo: centerInfoDraft,
         activities: updatedActivities,
       },
       'Đã cập nhật Hình ảnh & Hoạt động trên trang chủ và đồng bộ lên Firebase!'
@@ -515,7 +514,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     await triggerSaveSiteContent(
       {
         ...siteContent,
-        centerInfo: centerInfoDraft,
         activities: updatedActivities,
       },
       'Đã xóa hoạt động khỏi trang chủ và cập nhật Firebase.'
@@ -658,7 +656,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     await triggerSaveSiteContent(
       {
         ...siteContent,
-        centerInfo: centerInfoDraft,
         activities: updatedActivities,
       },
       'Đã cập nhật link hình ảnh thẻ hoạt động và đồng bộ lên Firebase!'
@@ -682,15 +679,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         activities: activitiesDraft,
       },
       'Đã cập nhật link ảnh Banner trang chủ và đồng bộ lên Firebase!'
-    );
-  };
-
-  const handleResetDefaultContent = async () => {
-    setCenterInfoDraft(DEFAULT_SITE_CONTENT.centerInfo);
-    setActivitiesDraft(DEFAULT_SITE_CONTENT.activities);
-    await triggerSaveSiteContent(
-      DEFAULT_SITE_CONTENT,
-      'Đã khôi phục nội dung mặc định trên Firebase!'
     );
   };
 
@@ -1848,15 +1836,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </p>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleResetDefaultContent}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer self-start sm:self-auto"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Khôi phục mặc định</span>
-                </button>
               </div>
 
               <form onSubmit={handleSaveCenterSettings} className="space-y-6">

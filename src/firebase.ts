@@ -8,12 +8,13 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
   collection,
   addDoc,
-  updateDoc,
   deleteDoc,
   onSnapshot,
   query,
@@ -41,7 +42,17 @@ export const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = (() => {
+  try {
+    return initializeFirestore(app, { ignoreUndefinedProperties: true });
+  } catch {
+    return getFirestore(app);
+  }
+})();
+
+function sanitizeForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
 
 // Default email domain for converting plain username (e.g. "admin" -> "admin@webapp.com")
 export const DEFAULT_ADMIN_EMAIL_DOMAIN = 'webapp.com';
@@ -349,27 +360,15 @@ function normalizeActivitiesList(
   items: (ActivityItem & { customImageUrl?: string })[];
   needsMigration: boolean;
 } {
-  if (!Array.isArray(rawActivities) || rawActivities.length === 0) {
-    return { items: ACTIVITIES_GALLERY, needsMigration: true };
+  if (!Array.isArray(rawActivities)) {
+    return { items: ACTIVITIES_GALLERY, needsMigration: false };
   }
-  let needsMigration = false;
-  const items = rawActivities.map((act, idx) => {
-    const trimmedUrl = (act.customImageUrl || '').trim();
-    if (trimmedUrl) {
-      return { ...act, customImageUrl: trimmedUrl };
-    }
-    needsMigration = true;
-    const matchedDefault =
-      ACTIVITIES_GALLERY.find((d) => d.id === act.id) ||
-      ACTIVITIES_GALLERY[idx % ACTIVITIES_GALLERY.length];
-    return {
-      ...act,
-      customImageUrl:
-        matchedDefault?.customImageUrl ||
-        'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1200&q=80',
-    };
-  });
-  return { items, needsMigration };
+  // Respect the exact activities array stored on Firebase (including empty array or custom items)
+  const items = rawActivities.map((act) => ({
+    ...act,
+    customImageUrl: (act.customImageUrl || '').trim(),
+  }));
+  return { items, needsMigration: false };
 }
 
 export const DEFAULT_SITE_CONTENT: SiteContentData = {
@@ -403,6 +402,7 @@ export const DEFAULT_SITE_CONTENT: SiteContentData = {
 
 // Primary public documents compatible with `match /public_data/{document=**}` rule (`allow read: if true; allow write: if isAdmin();`)
 const PUBLIC_DATA_SITE_DOC_REF = doc(db, 'public_data', 'homepage');
+const ADMIN_SITE_BACKUP_DOC_REF = doc(db, 'admin_data', 'homepage_backup');
 const PUBLIC_DATA_REGISTRATIONS_DOC_REF = doc(
   db,
   'public_data',
@@ -417,7 +417,41 @@ const ADMIN_REGISTRATIONS_COL_REF = collection(
   'registrations'
 );
 
-const LOCAL_SITE_CACHE_KEY = 'sathay_site_content_cache_v7';
+const LOCAL_SITE_CACHE_KEY = 'sathay_firebase_site_content_v8';
+const OBSOLETE_SAMPLE_CACHE_KEYS = [
+  'sathay_site_content_cache_v7',
+  'sathay_site_content_cache_v6',
+  'sathay_site_content_cache_v5',
+  'sathay_site_content_cache_v4',
+  'sathay_site_content_cache_v3',
+  'sathay_site_content_cache_v2',
+  'sathay_site_content_cache_v1',
+];
+
+// IDs of the old hardcoded sample data to be stripped if they were previously cached or written
+const SAMPLE_CLASS_IDS = new Set([
+  'ly-6-co-yen',
+  'toan-8-thay-chien',
+  'toan-9-thay-chien',
+  'ly-7-co-yen',
+  'toan-6-nen-tang',
+  'tieng-anh-thcs',
+]);
+
+const SAMPLE_ACTIVITY_IDS = new Set(['act-1', 'act-2', 'act-3', 'act-4']);
+
+function purgeObsoleteSampleCaches() {
+  try {
+    for (const key of OBSOLETE_SAMPLE_CACHE_KEYS) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+purgeObsoleteSampleCaches();
+
 const LOCAL_REG_CACHE_KEY = 'sathay_registrations_cache_v2';
 const LOCAL_REG_STATUS_MAP_KEY = 'sathay_reg_status_overrides_v1';
 const LOCAL_DELETED_REG_IDS_KEY = 'sathay_reg_deleted_ids_v1';
@@ -517,33 +551,9 @@ export function getCachedSiteContent(): SiteContentData {
   try {
     const raw = localStorage.getItem(LOCAL_SITE_CACHE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      const mergedCenterInfo: CenterSiteInfo = {
-        ...DEFAULT_SITE_CONTENT.centerInfo,
-        ...(parsed.centerInfo || {}),
-      };
-      mergedCenterInfo.fullTitle = normalizeFullTitle(
-        mergedCenterInfo.fullTitle
-      );
-      mergedCenterInfo.topBannerImageUrl = normalizeBannerUrl(
-        mergedCenterInfo.topBannerImageUrl
-      );
-      mergedCenterInfo.portalPreviewImageUrl =
-        (mergedCenterInfo.portalPreviewImageUrl || '').trim() ||
-        DEFAULT_PORTAL_PREVIEW_URL;
-      mergedCenterInfo.hotline = normalizeHotline(mergedCenterInfo.hotline);
-      mergedCenterInfo.managementUrl = normalizeManagementUrl(
-        mergedCenterInfo.managementUrl
-      );
-      const { items: normalizedActs } = normalizeActivitiesList(
-        parsed.activities
-      );
-      return {
-        ...DEFAULT_SITE_CONTENT,
-        ...parsed,
-        centerInfo: mergedCenterInfo,
-        activities: normalizedActs,
-      };
+      const parsed = JSON.parse(raw) as Partial<SiteContentData>;
+      const { merged } = parseRawSiteSnapshot(parsed);
+      return merged;
     }
   } catch {
     // ignore
@@ -585,7 +595,7 @@ export function setCachedRegistrations(list: StudentRegistration[]) {
 
 function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
   merged: SiteContentData;
-  shouldMigrate: boolean;
+  hadSampleData: boolean;
 } {
   const rawBanner = raw.centerInfo?.topBannerImageUrl;
   const rawHotline = (raw.centerInfo?.hotline || '').trim();
@@ -598,8 +608,49 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
     DEFAULT_PORTAL_PREVIEW_URL;
   const normalizedPhone = normalizeHotline(rawHotline);
   const normalizedManagementUrl = normalizeManagementUrl(rawManagementUrl);
-  const { items: normalizedActivities, needsMigration } =
-    normalizeActivitiesList(raw.activities);
+
+  const rawClasses = Array.isArray(raw.classes) ? raw.classes : [];
+  const cleanedClasses = rawClasses.filter(
+    (c) => c && !SAMPLE_CLASS_IDS.has(c.id)
+  );
+
+  const rawActivities = Array.isArray(raw.activities) ? raw.activities : [];
+  const cleanedActivities = rawActivities
+    .filter((a) => a && !SAMPLE_ACTIVITY_IDS.has(a.id))
+    .map((act) => ({
+      ...act,
+      customImageUrl: (act.customImageUrl || '').trim(),
+    }));
+
+  const rawTimetable = Array.isArray(raw.timetable)
+    ? raw.timetable
+    : DEFAULT_SITE_CONTENT.timetable;
+  let removedSampleSessions = false;
+  const cleanedTimetable = rawTimetable.map((slot) => {
+    const rawSessions = Array.isArray(slot.sessions) ? slot.sessions : [];
+    const filteredSessions = rawSessions.filter(
+      (s) => s && !SAMPLE_CLASS_IDS.has(s.classId)
+    );
+    if (filteredSessions.length !== rawSessions.length) {
+      removedSampleSessions = true;
+    }
+    return {
+      ...slot,
+      sessions: filteredSessions,
+    };
+  });
+
+  const hadSampleData =
+    cleanedClasses.length !== rawClasses.length ||
+    cleanedActivities.length !== rawActivities.length ||
+    removedSampleSessions;
+
+  const rawStats = raw.centerInfo?.stats;
+  const cleanedStats = {
+    ...DEFAULT_SITE_CONTENT.centerInfo.stats,
+    ...(rawStats || {}),
+    activeClasses: cleanedClasses.length,
+  };
 
   const merged: SiteContentData = {
     centerInfo: {
@@ -610,27 +661,15 @@ function parseRawSiteSnapshot(raw: Partial<SiteContentData>): {
       managementUrl: normalizedManagementUrl,
       topBannerImageUrl: normalizedBanner,
       portalPreviewImageUrl: normalizedPortalImg,
+      stats: cleanedStats,
     },
-    classes: Array.isArray(raw.classes)
-      ? raw.classes
-      : DEFAULT_SITE_CONTENT.classes,
-    activities: normalizedActivities,
-    timetable: Array.isArray(raw.timetable)
-      ? raw.timetable
-      : DEFAULT_SITE_CONTENT.timetable,
+    classes: cleanedClasses,
+    activities: cleanedActivities,
+    timetable: cleanedTimetable,
     updatedAt: raw.updatedAt,
   };
 
-  const shouldMigrate = Boolean(
-    (rawBanner && rawBanner.includes(LEGACY_TOP_BANNER_ID)) ||
-      LEGACY_HOTLINES.includes(rawHotline) ||
-      normalizedPhone !== rawHotline ||
-      normalizedTitle !== rawTitle ||
-      normalizedManagementUrl !== rawManagementUrl ||
-      needsMigration
-  );
-
-  return { merged, shouldMigrate };
+  return { merged, hadSampleData };
 }
 
 /**
@@ -641,38 +680,83 @@ export function subscribeToSiteContent(
   onData: (data: SiteContentData, syncedWithFirebase: boolean) => void,
   onError?: (errMessage: string) => void
 ) {
+  let isCancelled = false;
+
+  const applyServerSnapshot = async (raw: Partial<SiteContentData>) => {
+    if (isCancelled) return;
+    const { merged, hadSampleData } = parseRawSiteSnapshot(raw);
+    setCachedSiteContent(merged);
+    onData(merged, true);
+    if (hadSampleData && auth.currentUser) {
+      try {
+        await setDoc(PUBLIC_DATA_SITE_DOC_REF, sanitizeForFirestore(merged));
+      } catch {
+        // ignore if not admin
+      }
+    }
+  };
+
+  // 1. Immediately fetch the latest document directly from the Firebase server
+  (async () => {
+    try {
+      const serverSnap = await getDocFromServer(PUBLIC_DATA_SITE_DOC_REF);
+      if (serverSnap.exists()) {
+        await applyServerSnapshot(
+          serverSnap.data() as Partial<SiteContentData>
+        );
+        return;
+      }
+    } catch {
+      // Fallback to standard getDoc if offline or getDocFromServer unavailable
+      try {
+        const stdSnap = await getDoc(PUBLIC_DATA_SITE_DOC_REF);
+        if (stdSnap.exists()) {
+          await applyServerSnapshot(stdSnap.data() as Partial<SiteContentData>);
+          return;
+        }
+      } catch {
+        // ignore and let onSnapshot handle
+      }
+    }
+
+    // If `public_data/homepage` did not exist on server and Admin is logged in, check `admin_data/homepage_backup`
+    if (auth.currentUser && !isCancelled) {
+      try {
+        const backupSnap = await getDoc(ADMIN_SITE_BACKUP_DOC_REF);
+        if (backupSnap.exists()) {
+          const rawBackup = backupSnap.data() as Partial<SiteContentData>;
+          const { merged } = parseRawSiteSnapshot(rawBackup);
+          setCachedSiteContent(merged);
+          onData(merged, true);
+          await setDoc(
+            PUBLIC_DATA_SITE_DOC_REF,
+            sanitizeForFirestore(merged)
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
+  })();
+
+  // 2. Listen to real-time updates on `public_data/homepage`
   const primaryUnsub = onSnapshot(
     PUBLIC_DATA_SITE_DOC_REF,
+    { includeMetadataChanges: true },
     async (snap) => {
+      if (isCancelled) return;
       if (snap.exists()) {
         const raw = snap.data() as Partial<SiteContentData>;
-        const { merged, shouldMigrate } = parseRawSiteSnapshot(raw);
-        setCachedSiteContent(merged);
-        onData(merged, true);
-        if (shouldMigrate && auth.currentUser) {
-          try {
-            await setDoc(PUBLIC_DATA_SITE_DOC_REF, merged);
-          } catch {
-            // ignore background migration error if not admin
-          }
-        }
+        await applyServerSnapshot(raw);
       } else {
-        const initialData: SiteContentData = {
-          ...getCachedSiteContent(),
-          updatedAt: new Date().toISOString(),
-        };
-        setCachedSiteContent(initialData);
-        onData(initialData, true);
-        if (auth.currentUser) {
-          try {
-            await setDoc(PUBLIC_DATA_SITE_DOC_REF, initialData);
-          } catch {
-            // ignore if current user is not admin
-          }
+        if (snap.metadata.fromCache) {
+          return;
         }
+        onData(getCachedSiteContent(), true);
       }
     },
     (err) => {
+      if (isCancelled) return;
       onData(getCachedSiteContent(), false);
       if (onError) {
         onError(err.message);
@@ -681,12 +765,13 @@ export function subscribeToSiteContent(
   );
 
   return () => {
+    isCancelled = true;
     primaryUnsub();
   };
 }
 
 /**
- * Save updated SiteContentData to Firestore `public_data/homepage`
+ * Save updated SiteContentData to Firestore `public_data/homepage` (and backup to `admin_data/homepage_backup`)
  */
 export async function saveSiteContentToFirebase(
   newData: SiteContentData
@@ -694,21 +779,33 @@ export async function saveSiteContentToFirebase(
   savedToCloud: boolean;
   error?: string;
 }> {
-  const payload: SiteContentData = {
+  const payload: SiteContentData = sanitizeForFirestore({
     ...newData,
     updatedAt: new Date().toISOString(),
-  };
+  });
   setCachedSiteContent(payload);
 
-  try {
-    await setDoc(PUBLIC_DATA_SITE_DOC_REF, payload);
+  const results = await Promise.allSettled([
+    setDoc(PUBLIC_DATA_SITE_DOC_REF, payload),
+    ...(auth.currentUser
+      ? [setDoc(ADMIN_SITE_BACKUP_DOC_REF, payload)]
+      : []),
+  ]);
+
+  if (results.some((r) => r.status === 'fulfilled')) {
     return { savedToCloud: true };
-  } catch (err) {
-    return {
-      savedToCloud: false,
-      error: err instanceof Error ? err.message : String(err || 'Permission denied'),
-    };
   }
+
+  const firstRejected = results.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected'
+  );
+  return {
+    savedToCloud: false,
+    error:
+      firstRejected?.reason instanceof Error
+        ? firstRejected.reason.message
+        : String(firstRejected?.reason || 'Permission denied'),
+  };
 }
 
 /**

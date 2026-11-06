@@ -122,7 +122,7 @@ export default function App() {
     return () => unsubAuth();
   }, []);
 
-  // Subscribe to Firestore real-time data on mount (and re-subscribe when admin auth changes)
+  // Subscribe to Firestore real-time Homepage Content (`public_data/homepage`) on mount
   useEffect(() => {
     const unsubSite = subscribeToSiteContent(
       (data, synced) => {
@@ -135,14 +135,6 @@ export default function App() {
       }
     );
 
-    const unsubRegs = subscribeToRegistrations((list, synced) => {
-      setRegistrations(list);
-      if (synced) {
-        setSyncedWithFirebase(true);
-        setFirebaseError(null);
-      }
-    });
-
     const handleRouteChange = () => {
       setViewMode(isInitialAdminRoute() ? 'admin' : 'home');
     };
@@ -151,9 +143,23 @@ export default function App() {
 
     return () => {
       unsubSite();
-      unsubRegs();
       window.removeEventListener('hashchange', handleRouteChange);
       window.removeEventListener('popstate', handleRouteChange);
+    };
+  }, []);
+
+  // Subscribe to Student Registrations (and re-subscribe when Admin auth status changes)
+  useEffect(() => {
+    const unsubRegs = subscribeToRegistrations((list, synced) => {
+      setRegistrations(list);
+      if (synced) {
+        setSyncedWithFirebase(true);
+        setFirebaseError(null);
+      }
+    });
+
+    return () => {
+      unsubRegs();
     };
   }, [isAdminAuthenticated]);
 
@@ -733,59 +739,67 @@ export default function App() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {filteredActivities.map((act) => (
-              <article
-                key={act.id}
-                className="group rounded-2xl border-2 border-slate-200/90 overflow-hidden bg-slate-50/50 hover:border-[#0D9456] transition-colors flex flex-col"
-              >
-                {/* Visual Frame */}
-                <div className="h-56 sm:h-64 w-full overflow-hidden border-b border-slate-200/80">
-                  <ActivityIllustration
-                    type={act.illustrationType}
-                    title={act.title}
-                    customImageUrl={act.customImageUrl}
-                  />
-                </div>
+          {filteredActivities.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+              <p className="text-sm font-bold text-slate-600">
+                Chưa có hình ảnh hoạt động nào trong danh mục này trên hệ thống.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {filteredActivities.map((act) => (
+                <article
+                  key={act.id}
+                  className="group rounded-2xl border-2 border-slate-200/90 overflow-hidden bg-slate-50/50 hover:border-[#0D9456] transition-colors flex flex-col"
+                >
+                  {/* Visual Frame */}
+                  <div className="h-56 sm:h-64 w-full overflow-hidden border-b border-slate-200/80">
+                    <ActivityIllustration
+                      type={act.illustrationType}
+                      title={act.title}
+                      customImageUrl={act.customImageUrl}
+                    />
+                  </div>
 
-                {/* Content */}
-                <div className="p-5 flex-1 flex flex-col justify-between gap-4 bg-white">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-bold flex-wrap">
-                      <span className="text-[#EA580C]">
-                        {act.category}
-                      </span>
-                      <span aria-hidden="true" className="text-slate-300">·</span>
-                      <span className="text-[#0066B3]">{act.teacher}</span>
-                      <span aria-hidden="true" className="text-slate-300">·</span>
-                      <span className="font-mono-tabular text-slate-500">{act.date}</span>
+                  {/* Content */}
+                  <div className="p-5 flex-1 flex flex-col justify-between gap-4 bg-white">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-bold flex-wrap">
+                        <span className="text-[#EA580C]">
+                          {act.category}
+                        </span>
+                        <span aria-hidden="true" className="text-slate-300">·</span>
+                        <span className="text-[#0066B3]">{act.teacher}</span>
+                        <span aria-hidden="true" className="text-slate-300">·</span>
+                        <span className="font-mono-tabular text-slate-500">{act.date}</span>
+                      </div>
+
+                      <h3 className="text-base sm:text-lg font-extrabold text-[#064E29] leading-snug">
+                        {act.title}
+                      </h3>
+
+                      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                        {act.summary}
+                      </p>
                     </div>
 
-                    <h3 className="text-base sm:text-lg font-extrabold text-[#064E29] leading-snug">
-                      {act.title}
-                    </h3>
-
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                      {act.summary}
-                    </p>
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                      <span className="text-xs font-bold text-[#0D9456]">
+                        {act.metrics}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedActivityModal(act)}
+                        className="text-xs font-extrabold text-[#D9232A] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        Xem chi tiết →
+                      </button>
+                    </div>
                   </div>
-
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
-                    <span className="text-xs font-bold text-[#0D9456]">
-                      {act.metrics}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedActivityModal(act)}
-                      className="text-xs font-extrabold text-[#D9232A] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
-                    >
-                      Xem chi tiết →
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* SECTION 3: GIỚI THIỆU MỘT SỐ LỚP HỌC ĐANG HOẠT ĐỘNG */}
@@ -831,88 +845,96 @@ export default function App() {
           </div>
 
           {/* Class Cards Grid matching screenshot layout */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {filteredClasses.map((course, idx) => {
-              const titleColors = [
-                'text-[#0066B3]',
-                'text-[#D9232A]',
-                'text-[#EA580C]',
-                'text-[#0D9456]',
-              ];
-              const titleColor = titleColors[idx % titleColors.length];
-              return (
-                <div
-                  key={course.id}
-                  className="rounded-2xl border-2 border-slate-200/90 bg-white hover:border-[#EA580C] transition-colors p-4 sm:p-6 flex flex-col justify-between gap-4"
-                >
-                  <div className="space-y-3">
-                    {/* Top metadata line: Subject & Student Count */}
-                    <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs font-extrabold">
-                      <span className="text-[#064E29] uppercase tracking-wider shrink-0 bg-[#EAF4F0] px-2 py-0.5 rounded-md text-[11px] sm:text-xs">
-                        Môn {course.subject} · {course.grade}
-                      </span>
-                      <span className="text-[#0D9456] font-mono-tabular text-[11px] sm:text-xs shrink-0">
-                        {course.studentsCount}/{course.maxStudents} Học sinh ·{' '}
-                        {course.status}
-                      </span>
-                    </div>
-
-                    {/* Course Title & Room */}
-                    <div className="flex items-baseline justify-between gap-2 flex-wrap sm:flex-nowrap">
-                      <h3
-                        className={`text-xl sm:text-2xl font-black tracking-tight shrink-0 whitespace-nowrap ${titleColor}`}
-                      >
-                        {course.name}
-                      </h3>
-                      <span className="text-xs font-bold text-[#EA580C] font-mono-tabular text-right">
-                        {course.room}
-                      </span>
-                    </div>
-
-                    {/* Brief Course Description */}
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                      {course.description}
-                    </p>
-                  </div>
-
-                  <div className="space-y-3 pt-3 border-t border-slate-100">
-                    {/* Teacher & Schedule Row */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs sm:text-sm">
-                      <div className="text-slate-700">
-                        GV:{' '}
-                        <strong className="text-[#064E29] font-extrabold">
-                          {course.teacher}
-                        </strong>
+          {filteredClasses.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/70 p-8 text-center">
+              <p className="text-sm font-bold text-slate-600">
+                Chưa có lớp học nào trong danh mục này trên hệ thống.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {filteredClasses.map((course, idx) => {
+                const titleColors = [
+                  'text-[#0066B3]',
+                  'text-[#D9232A]',
+                  'text-[#EA580C]',
+                  'text-[#0D9456]',
+                ];
+                const titleColor = titleColors[idx % titleColors.length];
+                return (
+                  <div
+                    key={course.id}
+                    className="rounded-2xl border-2 border-slate-200/90 bg-white hover:border-[#EA580C] transition-colors p-4 sm:p-6 flex flex-col justify-between gap-4"
+                  >
+                    <div className="space-y-3">
+                      {/* Top metadata line: Subject & Student Count */}
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs font-extrabold">
+                        <span className="text-[#064E29] uppercase tracking-wider shrink-0 bg-[#EAF4F0] px-2 py-0.5 rounded-md text-[11px] sm:text-xs">
+                          Môn {course.subject} · {course.grade}
+                        </span>
+                        <span className="text-[#0D9456] font-mono-tabular text-[11px] sm:text-xs shrink-0">
+                          {course.studentsCount}/{course.maxStudents} Học sinh ·{' '}
+                          {course.status}
+                        </span>
                       </div>
-                      <div className="text-[#0066B3] font-mono-tabular font-bold">
-                        {course.schedule}
+
+                      {/* Course Title & Room */}
+                      <div className="flex items-baseline justify-between gap-2 flex-wrap sm:flex-nowrap">
+                        <h3
+                          className={`text-xl sm:text-2xl font-black tracking-tight shrink-0 whitespace-nowrap ${titleColor}`}
+                        >
+                          {course.name}
+                        </h3>
+                        <span className="text-xs font-bold text-[#EA580C] font-mono-tabular text-right">
+                          {course.room}
+                        </span>
+                      </div>
+
+                      {/* Brief Course Description */}
+                      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                        {course.description}
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 pt-3 border-t border-slate-100">
+                      {/* Teacher & Schedule Row */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs sm:text-sm">
+                        <div className="text-slate-700">
+                          GV:{' '}
+                          <strong className="text-[#064E29] font-extrabold">
+                            {course.teacher}
+                          </strong>
+                        </div>
+                        <div className="text-[#0066B3] font-mono-tabular font-bold">
+                          {course.schedule}
+                        </div>
+                      </div>
+
+                      {/* Card Actions: Full-width stacked buttons on mobile, side-by-side on tablet/desktop */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedClassModal(course)}
+                          className="w-full sm:w-auto px-4 py-2.5 rounded-xl border-2 border-slate-200 hover:border-[#0066B3] text-xs font-bold text-[#0066B3] hover:bg-[#F0F7FF] transition-colors text-center cursor-pointer"
+                        >
+                          Xem nội dung lớp học
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => scrollToRegistrationForm(course)}
+                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#EA580C] to-[#D9232A] hover:from-[#C2410C] hover:to-[#B91C1C] text-white text-xs font-extrabold shadow-sm transition-transform active:scale-[0.98] text-center cursor-pointer"
+                        >
+                          <span>Đăng ký học lớp này</span>
+                          <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                        </button>
                       </div>
                     </div>
-
-                    {/* Card Actions: Full-width stacked buttons on mobile, side-by-side on tablet/desktop */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedClassModal(course)}
-                        className="w-full sm:w-auto px-4 py-2.5 rounded-xl border-2 border-slate-200 hover:border-[#0066B3] text-xs font-bold text-[#0066B3] hover:bg-[#F0F7FF] transition-colors text-center cursor-pointer"
-                      >
-                        Xem nội dung lớp học
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => scrollToRegistrationForm(course)}
-                        className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#EA580C] to-[#D9232A] hover:from-[#C2410C] hover:to-[#B91C1C] text-white text-xs font-extrabold shadow-sm transition-transform active:scale-[0.98] text-center cursor-pointer"
-                      >
-                        <span>Đăng ký học lớp này</span>
-                        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-                      </button>
-                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* SECTION 4: THỜI KHÓA BIỂU CÁC LỚP */}
@@ -1347,11 +1369,17 @@ export default function App() {
                       }
                       className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-900 focus:border-[#0066A2] focus:outline-none"
                     >
-                      {classes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} — GV: {c.teacher}
+                      {classes.length === 0 ? (
+                        <option value="lop-tu-chon">
+                          Đăng ký tư vấn xếp lớp phù hợp
                         </option>
-                      ))}
+                      ) : (
+                        classes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} — GV: {c.teacher}
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 
